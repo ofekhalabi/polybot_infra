@@ -29,11 +29,11 @@ jobs:
 
       - name: Terraform create workspace
         run: |
-          terraform workspace select ${{ github.event.inputs.workespace }} || terraform workspace new ${{ github.event.inputs.workespace }}
+          terraform workspace select ${{ github.event.inputs.workspace }} || terraform workspace new ${{ github.event.inputs.workspace }}
 
       - name: Terraform Check Format
         run: terraform fmt -recursive
 
       - name: Terraform Plan
-        run: terraform plan -var-file="envs/${{ github.event.inputs.workespace }}/${{ github.event.inputs.workespace }}.tfvars"
+        run: terraform plan -var-file="envs/${{ github.event.inputs.workspace }}/${{ github.event.inputs.workspace }}.tfvars"
 
