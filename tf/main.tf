@@ -5,14 +5,14 @@ terraform {
       version = "~> 5.55"
     }
   }
-  
+
   required_version = ">= 1.7.0"
 
   # Configure the backend to store the state file in S3
   backend "s3" {
-    bucket         = "ofekh-polybot-tfstate"
-    key            = "tfstate.json"
-    region         = "eu-north-1"
+    bucket = "ofekh-polybot-tfstate"
+    key    = "env/${var.region}/terraform.tfstate"
+    region = "eu-north-1"
   }
 }
 
@@ -33,9 +33,9 @@ module "token_manager" {
   source = "./modules/token-manager"
 
   control_plane_instance_id = module.k8s_cluster.control_plane_instance_id
-  secret_name              = "${var.secret_name_prefix}-worker-join-command"
-  lambda_function_name     = "${var.cluster_name}-token-manager"
-  
+  control_plane_role_name   = module.k8s_cluster.control_plane_role_name
+  lambda_function_name      = "${var.cluster_name}-token-manager"
+
   tags = {
     Terraform   = "true"
     Environment = var.environment

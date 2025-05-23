@@ -1,6 +1,6 @@
 # Create AWS Secrets Manager secret
 resource "aws_secretsmanager_secret" "join_command" {
-  name = var.secret_name
+  name = var.secret_manager_name
   tags = var.tags
 }
 
@@ -24,7 +24,7 @@ resource "aws_iam_role" "lambda_role" {
   tags = var.tags
 }
 
-# Create IAM policy for Lambda
+# Create IAM policy for Lambda ansd attach to role
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "${var.lambda_function_name}-policy"
   role = aws_iam_role.lambda_role.id
@@ -74,16 +74,16 @@ data "archive_file" "lambda_zip" {
 resource "aws_lambda_function" "token_manager" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = var.lambda_function_name
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "token_manager.lambda_handler"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "token_manager.lambda_handler"
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  runtime         = "python3.9"
-  timeout         = var.lambda_timeout
+  runtime          = "python3.9"
+  timeout          = var.lambda_timeout
 
   environment {
     variables = {
       CONTROL_PLANE_INSTANCE_ID = var.control_plane_instance_id
-      SECRET_NAME              = aws_secretsmanager_secret.join_command.name
+      SECRET_MANAGER_NAME       = aws_secretsmanager_secret.join_command.name
     }
   }
 
@@ -95,14 +95,16 @@ resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "${var.lambda_function_name}-schedule"
   description         = "Schedule for running token manager Lambda function"
   schedule_expression = var.schedule_expression
-  tags               = var.tags
+  tags                = var.tags
 }
 
+# Create EventBridge target for Lambda function
 resource "aws_cloudwatch_event_target" "lambda" {
   rule      = aws_cloudwatch_event_rule.schedule.name
   target_id = "TokenManagerLambda"
   arn       = aws_lambda_function.token_manager.arn
 }
+
 
 resource "aws_lambda_permission" "allow_eventbridge" {
   statement_id  = "AllowEventBridgeInvoke"
@@ -114,6 +116,6 @@ resource "aws_lambda_permission" "allow_eventbridge" {
 
 # Modify control plane instance role to allow SSM
 resource "aws_iam_role_policy_attachment" "ssm_policy" {
-  role       = "AWSSystemsManagerInstanceCore"
+  role       = var.control_plane_role_name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 } 

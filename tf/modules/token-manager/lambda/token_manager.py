@@ -9,7 +9,7 @@ def lambda_handler(event, context):
     
     # Get environment variables
     instance_id = os.environ['CONTROL_PLANE_INSTANCE_ID']
-    secret_name = os.environ['SECRET_NAME']
+    secret_name = os.environ['SECRET_MANAGER_NAME']
     
     try:
         # Run kubeadm command on the control plane instance

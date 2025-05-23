@@ -1,0 +1,39 @@
+name: Terraform Manual Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: 'Workspace to deploy (e.g. eu-north-1, eu-west-1, us-east-1)'
+        required: true
+        default: eu-north-1
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          terraform init 
+
+      - name: Terraform create workspace
+        run: |
+          terraform workspace select ${{ github.event.inputs.namespace }} || terraform workspace new ${{ github.event.inputs.namespace }}
+
+      - name: Terraform Check Format
+        run: terraform fmt -recursive
+
+      - name: Terraform Plan
+        run: terraform plan -var-file="envs/${{ github.event.inputs.namespace }}/${{ github.event.inputs.namespace }}.tfvars"
+

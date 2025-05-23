@@ -17,18 +17,20 @@ data "aws_availability_zones" "available_azs" {
   state = "available"
 }
 
-module "polybot-vpc"  {
+# VPC Module
+# This module creates a VPC with public and private subnets for the kubernetes cluster.
+module "polybot-vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.8.1"
 
   name = "${var.cluster_name}-vpc"
   cidr = var.vpc_cidr
 
-  azs             = data.aws_availability_zones.available_azs.names
-  public_subnets  = var.vpc_public_subnets
-  private_subnets = var.vpc_private_subnets
+  azs                     = data.aws_availability_zones.available_azs.names
+  public_subnets          = var.vpc_public_subnets
+  private_subnets         = var.vpc_private_subnets
   map_public_ip_on_launch = true
-  
+
   enable_nat_gateway = false
   enable_vpn_gateway = false
 
@@ -119,7 +121,7 @@ resource "aws_lb" "main" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets           = module.polybot-vpc.public_subnets
+  subnets            = module.polybot-vpc.public_subnets
 
   enable_deletion_protection = false
 
@@ -129,15 +131,15 @@ resource "aws_lb" "main" {
   depends_on = [
     aws_security_group.alb,
     aws_lb_target_group.polybot-tg,
-    aws_autoscaling_group.worker,
-    ]
+    aws_autoscaling_group.worker-asg,
+  ]
 }
 
 # ALB Listener
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
-  port              = 80
-  protocol          = "HTTP"
+  port              = var.alb_port_listener
+  protocol          = var.alb_protocol_listener
 
   default_action {
     type             = "forward"
@@ -148,8 +150,8 @@ resource "aws_lb_listener" "http" {
 # create a target group for the ALB
 resource "aws_lb_target_group" "polybot-tg" {
   name     = "ofekh-polybot-tg"
-  port     = 80
-  protocol = "HTTP"
+  port     = var.alb_target_group_port
+  protocol = var.alb_target_group_protocol
   vpc_id   = module.polybot-vpc.vpc_id
 
   health_check {
@@ -194,20 +196,20 @@ resource "aws_iam_role" "control_plane_role" {
 
 # Create separate policy for OIDC operations
 resource "aws_iam_policy" "oidc_list_policy" {
-  name = "ofekh-oidc-list-policy"
+  name        = "ofekh-oidc-list-policy"
   description = "Policy to allow OIDC provider operations"
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = "iam:ListOpenIDConnectProviders"
+        Effect   = "Allow"
+        Action   = "iam:ListOpenIDConnectProviders"
         Resource = "*"
       },
       {
-        Effect = "Allow"
-        Action = "iam:GetOpenIDConnectProvider"
+        Effect   = "Allow"
+        Action   = "iam:GetOpenIDConnectProvider"
         Resource = "arn:aws:iam::352708296901:oidc-provider/*"
       }
     ]
@@ -255,6 +257,30 @@ resource "aws_iam_role_policy_attachment" "control_plane_secrets_policy" {
 resource "aws_iam_instance_profile" "control_plane_profile" {
   name = "${var.control_plane_role_name}-profile"
   role = aws_iam_role.control_plane_role.name
+}
+
+# Control Plane Instance
+resource "aws_instance" "control_plane" {
+  ami                  = data.aws_ami.ubuntu.id
+  instance_type        = var.control_plane_instance_type
+  key_name             = var.key_name
+  iam_instance_profile = aws_iam_instance_profile.control_plane_profile.name
+
+  subnet_id                   = module.polybot-vpc.public_subnets[0]
+  vpc_security_group_ids      = [aws_security_group.control_plane.id]
+  associate_public_ip_address = true
+
+  root_block_device {
+    volume_size = var.ebs_volume_size
+  }
+  user_data = base64encode(templatefile("${path.module}/templates/controlPlane-userdata.sh", {
+    kubernetes_version = var.kubernetes_version,
+    OS                 = "xUbuntu_22.04"
+  }))
+
+  tags = {
+    Name = "${var.cluster_name}-control-plane"
+  }
 }
 
 # Create IAM role for worker nodes
@@ -329,8 +355,8 @@ resource "aws_iam_instance_profile" "worker_node_profile" {
 }
 
 # Launch Template for Worker Nodes
-resource "aws_launch_template" "worker" {
-  name_prefix   = "${var.cluster_name}-worker-"
+resource "aws_launch_template" "worker-template" {
+  name_prefix   = "${var.cluster_name}-worker-template-"
   image_id      = data.aws_ami.ubuntu.id
   instance_type = var.worker_instance_type
   key_name      = var.key_name
@@ -341,8 +367,8 @@ resource "aws_launch_template" "worker" {
 
   network_interfaces {
     associate_public_ip_address = true
-    security_groups            = [aws_security_group.worker.id]
-    subnet_id                  = module.polybot-vpc.public_subnets[0]
+    security_groups             = [aws_security_group.worker.id]
+    subnet_id                   = module.polybot-vpc.public_subnets[0]
   }
 
   block_device_mappings {
@@ -367,117 +393,40 @@ resource "aws_launch_template" "worker" {
 }
 
 # Auto Scaling Group for Worker Nodes
-resource "aws_autoscaling_group" "worker" {
+resource "aws_autoscaling_group" "worker-asg" {
   name                = "${var.cluster_name}-worker-asg"
   desired_capacity    = var.worker_desired_capacity
-  max_size           = var.worker_max_size
-  min_size           = var.worker_min_size
-  target_group_arns  = [aws_lb_target_group.polybot-tg.arn]
+  max_size            = var.worker_max_size
+  min_size            = var.worker_min_size
+  target_group_arns   = [aws_lb_target_group.polybot-tg.arn]
   vpc_zone_identifier = module.polybot-vpc.public_subnets
 
   launch_template {
-    id      = aws_launch_template.worker.id
+    id      = aws_launch_template.worker-template.id
     version = "$Latest"
   }
 
   tag {
     key                 = "Name"
-    value              = "${var.cluster_name}-worker"
+    value               = "${var.cluster_name}-worker"
     propagate_at_launch = true
   }
   depends_on = [
-    aws_launch_template.worker,
+    aws_launch_template.worker-template,
     aws_lb_target_group.polybot-tg,
   ]
 }
 
 # Attach target group to ASG
 resource "aws_autoscaling_attachment" "asg_attachment" {
-  autoscaling_group_name = aws_autoscaling_group.worker.name
-  lb_target_group_arn   = aws_lb_target_group.polybot-tg.arn
+  autoscaling_group_name = aws_autoscaling_group.worker-asg.name
+  lb_target_group_arn    = aws_lb_target_group.polybot-tg.arn
   depends_on = [
-    aws_autoscaling_group.worker,
+    aws_autoscaling_group.worker-asg,
     aws_lb_target_group.polybot-tg,
   ]
 }
 
-# Control Plane Instance
-resource "aws_instance" "control_plane" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = var.control_plane_instance_type
-  key_name      = var.key_name
-  iam_instance_profile = aws_iam_instance_profile.control_plane_profile.name
 
-  subnet_id                   = module.polybot-vpc.public_subnets[0]
-  vpc_security_group_ids      = [aws_security_group.control_plane.id]
-  associate_public_ip_address = true
-
-  root_block_device {
-    volume_size = var.ebs_volume_size
-  }
-
-  user_data = base64encode(<<-EOF
-              #!/bin/bash
-              # Update package list and upgrade packages
-              apt-get update
-              apt-get upgrade -y
-
-              # Install prerequisites
-              apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-
-              # Add Docker's official GPG key
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-
-              # Add Docker repository
-              echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-              # Install Docker
-              apt-get update
-              apt-get install -y docker-ce docker-ce-cli containerd.io
-
-              # Add Kubernetes repo and GPG key
-              curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg
-              echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
-
-              # Install Kubernetes components
-              apt-get update
-              apt-get install -y kubelet kubeadm kubectl
-              apt-mark hold kubelet kubeadm kubectl
-
-              # Configure containerd
-              cat <<EOF2 > /etc/modules-load.d/containerd.conf
-              overlay
-              br_netfilter
-              EOF2
-
-              modprobe overlay
-              modprobe br_netfilter
-
-              cat <<EOF2 > /etc/sysctl.d/99-kubernetes-cri.conf
-              net.bridge.bridge-nf-call-iptables  = 1
-              net.ipv4.ip_forward                 = 1
-              net.bridge.bridge-nf-call-ip6tables = 1
-              EOF2
-
-              sysctl --system
-
-              # Initialize control plane with Calico's default CIDR
-              kubeadm init --pod-network-cidr=192.168.0.0/16
-
-              # Configure kubectl for ubuntu user
-              mkdir -p /home/ubuntu/.kube
-              cp -i /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
-              chown -R ubuntu:ubuntu /home/ubuntu/.kube
-
-              # Install Calico CNI
-              sudo -u ubuntu kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/tigera-operator.yaml
-              sudo -u ubuntu kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/custom-resources.yaml
-              EOF
-  )
-
-  tags = {
-    Name = "${var.cluster_name}-control-plane"
-  }
-}
 
 

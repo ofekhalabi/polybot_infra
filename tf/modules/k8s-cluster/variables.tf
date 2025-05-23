@@ -79,13 +79,13 @@ variable "kubernetes_version" {
 variable "kubeadm_token" {
   description = "Token for kubeadm join command"
   type        = string
-  default     = ""  # Will be generated if not provided
+  default     = "" # Will be generated if not provided
 }
 
 variable "kubeadm_token_hash" {
   description = "Token hash for kubeadm join command"
   type        = string
-  default     = ""  # Will be generated if not provided
+  default     = "" # Will be generated if not provided
 }
 
 variable "lambda_runtime" {
@@ -146,4 +146,28 @@ variable "control_plane_role_name" {
   description = "Name of the IAM role for control plane"
   type        = string
   default     = "ofekh-polybot-control-plane-role"
+}
+
+variable "alb_port_listener" {
+  description = "Port for ALB listener"
+  type        = number
+  default     = 80
+}
+
+variable "alb_protocol_listener" {
+  description = "Protocol for ALB listener"
+  type        = string
+  default     = "HTTP"
+}
+
+variable "alb_target_group_port" {
+  description = "Port for ALB target group"
+  type        = number
+  default     = 80
+}
+
+variable "alb_target_group_protocol" {
+  description = "Protocol for ALB target group"
+  type        = string
+  default     = "HTTP"
 }
