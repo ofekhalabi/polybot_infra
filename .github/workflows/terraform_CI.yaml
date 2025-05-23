@@ -35,5 +35,5 @@ jobs:
         run: terraform fmt -recursive
 
       - name: Terraform Plan
-        run: terraform plan -var-file="envs/${{ github.event.inputs.workspace }}/${{ github.event.inputs.workspace }}.tfvars"
+        run: terraform plan -var-file="region.${{ github.event.inputs.workspace }}.tfvars"
 
