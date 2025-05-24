@@ -11,7 +11,7 @@ terraform {
   # Configure the backend to store the state file in S3
   backend "s3" {
     bucket = "ofekh-polybot-tfstate"
-    key    = "env/${var.region}/terraform.tfstate"
+    key    = "env/${terraform.workspace}/terraform.tfstate"
     region = "eu-north-1"
   }
 }
